@@ -259,6 +259,41 @@ class TestMailCcBccRecipients(MailCase):
         # no _assert_mails here: the mail.mail are gone, only the emails remain
         self._assert_headers(partners_to, partners_cc, partners_bcc)
 
+    def test_resend_keeps_the_cc_bcc_handling(self):
+        """Re-sending the same mail.mail must not fall back to core
+
+        The standard Retry button of Settings > Technical > Emails is
+        `mark_outgoing()` followed by the queue (`process_email_queue`), and it
+        runs without the `is_from_composer` context key. When the whole Cc /
+        Bcc handling was keyed on that key, the retry rebuilt the emails the
+        core way: it merged the stored `X-Msg-To-Add` header -- which lists
+        every external recipient, *Bcc partners included* -- into `To`, and
+        brought back the Cc-only duplicate email.
+        """
+        partners_to, cc_1, cc_2, partners_bcc = self.partners_same_lang
+        partners_cc = cc_1 + cc_2
+        message = self._send("resend", partners_to, partners_cc, partners_bcc)
+        self._assert_mails(message, partners_to, partners_cc, partners_bcc)
+
+        mails = message.mail_ids
+        self.assertTrue(mails, "MailCase keeps the sent mail.mail around")
+        mails.mark_outgoing()
+        with self.mock_mail_gateway():
+            self.env["mail.mail"].process_email_queue(email_ids=mails.ids)
+
+        bcc_addresses = set(partners_bcc.mapped("email"))
+        for email in self.emails:
+            disclosed = bcc_addresses & {
+                email_normalize(address)
+                for address in email_split(email["msg_to"] or "")
+            }
+            self.assertFalse(
+                disclosed,
+                f"Bcc recipients disclosed in the To header of a resent email: "
+                f"{sorted(disclosed)} in {email['msg_to']!r}",
+            )
+        self._assert_headers(partners_to, partners_cc, partners_bcc)
+
     def test_no_recipient_left_refuses_to_send(self):
         """Not knowing the recipient must raise, never fall back to To+Cc+Bcc
 

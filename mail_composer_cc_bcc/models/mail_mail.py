@@ -26,6 +26,16 @@ class MailMail(models.Model):
     _inherit = "mail.mail"
 
     email_bcc = fields.Char("Bcc", help="Blind Cc message recipients")
+    is_composer_cc_bcc = fields.Boolean(
+        "Composer Cc/Bcc handling",
+        copy=False,
+        help="Set by the composer when this email was built with the Cc / Bcc "
+        "handling of this module. It has to be stored: the handling must not "
+        "depend on the `is_from_composer` context key, which only exists while "
+        "the composer is sending. Any later send of the same mail.mail -- the "
+        "standard Retry button (Settings > Technical > Emails), the queue cron, "
+        "a resend wizard -- runs without it.",
+    )
 
     def _expose_bcc_marker(self):
         """Whether to also add the informational ``X-Odoo-Bcc`` marker header.
@@ -44,9 +54,19 @@ class MailMail(models.Model):
         res = super()._prepare_outgoing_list(
             mail_server=mail_server, doc_to_followers=doc_to_followers
         )
-        is_from_composer = self.env.context.get("is_from_composer", False)
-
-        if not is_from_composer:
+        # Read the marker from the record, not from the context: `mail.mail`
+        # records outlive the composer transaction and are re-sent through
+        # paths that know nothing about it (the standard Retry button ->
+        # `mark_outgoing` + `process_email_queue`, the queue cron, a resend
+        # wizard). Without the marker those sends fell back to core, which
+        # rebuilds `To` from the `X-Msg-To-Add` header stored on the record --
+        # a header that lists *every* external recipient, Bcc partners
+        # included -- and merges it into `To` in
+        # `IrMailServer._alter_message__`, disclosing the blind copies to
+        # everybody and sending the Cc recipients a second, duplicate email.
+        if not (
+            self.is_composer_cc_bcc or self.env.context.get("is_from_composer", False)
+        ):
             return res
 
         # In the absence of self.email_to, Odoo builds an extra Cc-only email

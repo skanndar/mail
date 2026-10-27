@@ -10,7 +10,15 @@ from odoo.addons.base.models.ir_mail_server import extract_rfc2822_addresses
 
 
 def format_emails(partners):
-    return [tools.formataddr((p.name or "", p.email)) for p in partners if p.email]
+    # Use the normalized address: Odoo 19 restricts the SMTP envelope of each
+    # email to ``send_validated_to`` (normalized, i.e. lower-cased), so an
+    # address kept with its original case in To / Cc never matches it and that
+    # recipient silently gets nothing.
+    return [
+        tools.formataddr((p.name or "", p.email_normalized or p.email))
+        for p in partners
+        if p.email
+    ]
 
 
 def format_emails_raw(partners):
@@ -94,7 +102,9 @@ class MailMail(models.Model):
         email_to = format_emails(partner_to)
         email_to_raw = format_emails_raw(partner_to)
         email_cc = format_emails_str(self.recipient_cc_ids)
-        email_bcc = [r.email for r in self.recipient_bcc_ids if r.email]
+        email_bcc = [
+            r.email_normalized or r.email for r in self.recipient_bcc_ids if r.email
+        ]
 
         # Update all emails with the same To, Cc headers (to be shown by the
         # email client as users expect)

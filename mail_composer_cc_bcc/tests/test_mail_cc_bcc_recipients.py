@@ -311,3 +311,40 @@ class TestMailCcBccRecipients(MailCase):
         server = mail_server.with_context(is_from_composer=True, send_validated_to=[])
         with self.assertRaises(ValueError):
             server._prepare_email_message__(message, None)
+
+    def test_mixed_case_addresses_are_delivered(self):
+        """An address stored with upper-case letters must still be delivered
+
+        Odoo 19 restricts the envelope of each email to its normalized
+        (lower-cased) recipient: To / Cc / Bcc built from the raw address
+        never matched it, and that recipient silently got nothing.
+        """
+        P = self.env["res.partner"]
+        to = P.create({"name": "Mixed To", "email": "Mixed.To@Example.com"})
+        cc = P.create({"name": "Mixed Cc", "email": "Mixed.Cc@Example.com"})
+        bcc = P.create({"name": "Mixed Bcc", "email": "Mixed.Bcc@Example.com"})
+        self._send("mixed-case", to, cc, bcc)
+        self.assertEqual(
+            Counter(self._envelope_recipients()),
+            Counter(email_normalize(p.email) for p in to + cc + bcc),
+            "each recipient must get exactly 1 email, whatever the case",
+        )
+
+    def test_cc_bcc_recipients_data_carry_the_email(self):
+        """Cc / Bcc partners added by the composer follow core's contract
+
+        Any override of ``_notify_get_recipients`` that skips recipients
+        without an address relies on ``email_normalized``: without it, the
+        Cc / Bcc partners that do not follow the record were dropped.
+        """
+        message = self.env["mail.message"].create(
+            {"model": self.record._name, "res_id": self.record.id, "body": "x"}
+        )
+        rdata = self.record.with_context(
+            is_from_composer=True,
+            partner_cc_ids=self.us2,
+            partner_bcc_ids=self.us3,
+        )._notify_get_recipients(message, {"message_type": "comment"})
+        by_id = {r["id"]: r for r in rdata}
+        for partner in self.us2 + self.us3:
+            self.assertEqual(by_id[partner.id]["email_normalized"], partner.email)

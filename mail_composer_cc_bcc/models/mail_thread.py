@@ -106,6 +106,12 @@ class MailThread(models.AbstractModel):
                     "is_follower": data.get("is_follower"),
                     "lang": data.get("lang"),
                     "uid": False,
+                    # Same contract as core's recipients data: without the
+                    # email, any override that skips recipients without an
+                    # address drops the Cc / Bcc partners that are not
+                    # followers, and they silently get nothing.
+                    "email_normalized": data.get("email_normalized") or "",
+                    "name": data.get("name") or "",
                 }
                 rdata.append(pdata)
         return rdata
